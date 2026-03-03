@@ -4,7 +4,7 @@ import { FileText, Loader2, CheckCircle2, AlertCircle, Download, UploadCloud, Ba
 const MODEL_NAME = "gemini-2.0-flash"; 
 
 const App = () => {
-  // --- 新增狀態：API Key 管理 ---
+  // --- 狀態：API Key 管理 ---
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('gemini_api_key') || '');
 
   // --- 原有狀態 ---
@@ -23,7 +23,7 @@ const App = () => {
   const [editableOrderIds, setEditableOrderIds] = useState('');
   const [editableDetails, setEditableDetails] = useState('');
 
-  // --- 新增 Ref：自動調整高度 ---
+  // --- Ref：自動調整高度 ---
   const orderIdsRef = useRef(null);
   const detailsRef = useRef(null);
 
@@ -41,32 +41,44 @@ const App = () => {
     }
   }, [editableOrderIds, editableDetails, activeTab]);
 
-  // 【修正重點 1】初始化 pdf.js 與 xlsx，改用 jsdelivr 確保 cmaps 語言包存在
+  // 【修正重點 1】動態載入 Tailwind CSS 與初始化模組 (解決 GitHub Pages 介面失效問題)
   useEffect(() => {
-    const pdfScript = document.createElement('script');
-    pdfScript.src = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js';
-    pdfScript.async = true;
-    document.head.appendChild(pdfScript);
-    pdfScript.onload = () => {
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
-    };
+    if (!document.getElementById('tailwind-script')) {
+      const tailwindScript = document.createElement('script');
+      tailwindScript.id = 'tailwind-script';
+      tailwindScript.src = 'https://cdn.tailwindcss.com';
+      document.head.appendChild(tailwindScript);
+    }
 
-    const xlsxScript = document.createElement('script');
-    xlsxScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-    xlsxScript.async = true;
-    document.head.appendChild(xlsxScript);
+    if (!document.getElementById('pdfjs-script')) {
+      const pdfScript = document.createElement('script');
+      pdfScript.id = 'pdfjs-script';
+      pdfScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+      pdfScript.async = true;
+      document.head.appendChild(pdfScript);
+      pdfScript.onload = () => {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      };
+    }
+
+    if (!document.getElementById('xlsx-script')) {
+      const xlsxScript = document.createElement('script');
+      xlsxScript.id = 'xlsx-script';
+      xlsxScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      xlsxScript.async = true;
+      document.head.appendChild(xlsxScript);
+    }
   }, []);
 
   // --- 1. 影像預處理 ---
   const pdfToImages = async (file) => {
     const arrayBuffer = await file.arrayBuffer();
     
-    // 【修正重點 2】使用 jsdelivr 的完整路徑載入字型對應表，解決中文亂碼
     const pdf = await window.pdfjsLib.getDocument({ 
       data: arrayBuffer,
-      cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/cmaps/',
+      cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/',
       cMapPacked: true,
-      standardFontDataUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/standard_fonts/'
+      standardFontDataUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/standard_fonts/'
     }).promise;
 
     const images = [];
@@ -79,8 +91,12 @@ const App = () => {
       canvas.height = viewport.height;
       canvas.width = viewport.width;
       
+      // 【修正重點 2】塗白背景！避免 PDF 透明背景轉 JPEG 後變成全黑，導致 AI 讀出亂碼
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      
       await page.render({ canvasContext: context, viewport }).promise;
-      images.push(canvas.toDataURL('image/jpeg', 0.85).split(',')[1]);
+      images.push(canvas.toDataURL('image/jpeg', 0.9).split(',')[1]);
     }
     return images;
   };
@@ -134,7 +150,6 @@ const App = () => {
       }
     };
 
-    // 使用使用者輸入的 API Key
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${apiKey}`;
     const response = await fetch(url, {
       method: 'POST',
@@ -155,7 +170,6 @@ const App = () => {
   const processFiles = async (uploadedFiles) => {
     if (uploadedFiles.length === 0) return;
     
-    // 【修正重點 3】檢查是否已填寫 API Key
     if (!apiKey.trim()) {
       alert("請先於上方設定 Gemini API Key！");
       return;
@@ -229,7 +243,7 @@ const App = () => {
     }
   };
 
-  // --- 發票 XLSX 處理邏輯 ---
+  // --- 發票 XLSX/CSV 處理邏輯 ---
   const processInvoiceFile = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -239,10 +253,7 @@ const App = () => {
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      const arrayBuffer = evt.target.result;
-      const wb = window.XLSX.read(arrayBuffer, { type: 'array' });
+    const processWorkbookData = (wb) => {
       const wsname = wb.SheetNames[0];
       const ws = wb.Sheets[wsname];
       const rows = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
@@ -297,7 +308,27 @@ const App = () => {
         alert("找不到對應的欄位（需要「項目名」與「金額（未稅）」），請確認檔案格式是否正確。");
       }
     };
-    reader.readAsArrayBuffer(file);
+
+    const isCSV = file.name.toLowerCase().endsWith('.csv');
+    const reader = new FileReader();
+
+    reader.onload = (evt) => {
+      let wb;
+      if (isCSV) {
+        // 【修正重點 3】如果是 CSV 檔，強制解析成 String 以對應 Big5 編碼 (解決台灣發票 CSV 讀取亂碼問題)
+        wb = window.XLSX.read(evt.target.result, { type: 'string' });
+      } else {
+        wb = window.XLSX.read(evt.target.result, { type: 'array' });
+      }
+      processWorkbookData(wb);
+    };
+
+    if (isCSV) {
+      reader.readAsText(file, 'big5');
+    } else {
+      reader.readAsArrayBuffer(file);
+    }
+    
     e.target.value = null; 
   };
 
@@ -568,7 +599,7 @@ const App = () => {
     <div className="min-h-screen bg-slate-50 p-6 md:p-10 font-sans">
       <div className="max-w-[1400px] mx-auto">
 
-        {/* --- 新增：API Key 設定區塊 --- */}
+        {/* --- API Key 設定區塊 --- */}
         <div className="bg-white px-6 py-4 rounded-[2rem] shadow-sm border border-slate-200 mb-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div className="flex items-center gap-3 text-slate-700">
             <div className="p-2 bg-indigo-100 rounded-full text-indigo-600">
@@ -576,7 +607,7 @@ const App = () => {
             </div>
             <div>
               <h2 className="font-bold">系統設定</h2>
-              <p className="text-sm text-slate-500">請輸入您的 Gemini API Key 以啟用解析功能</p>
+              <p className="text-sm text-slate-500">請輸入您的 Gemini API Key 以啟用自動解析</p>
             </div>
           </div>
           <div className="w-full md:w-auto flex-1 max-w-md">
@@ -584,7 +615,7 @@ const App = () => {
               type="password" 
               value={apiKey} 
               onChange={handleApiKeyChange}
-              placeholder="AIzaSy..." 
+              placeholder="請填入 AIzaSy..." 
               className="w-full bg-slate-50 border border-slate-200 text-slate-700 rounded-xl px-4 py-2 focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition-all font-mono text-sm"
             />
           </div>
@@ -629,7 +660,7 @@ const App = () => {
             onClick={() => setActiveTab('invoice')}
             className={`flex items-center gap-2 px-6 py-3 rounded-2xl font-bold transition-all shadow-sm ${activeTab === 'invoice' ? 'bg-indigo-600 text-white shadow-indigo-200' : 'bg-white text-slate-500 hover:bg-slate-50 border border-slate-200'}`}
           >
-            <FileSpreadsheet size={20} /> XLSX 發票資料
+            <FileSpreadsheet size={20} /> 發票資料對接
           </button>
           <button
             onClick={() => setActiveTab('compare')}
@@ -811,8 +842,8 @@ const App = () => {
             <div className="relative border-4 border-dashed border-slate-200 rounded-[2.5rem] p-10 mb-8 flex flex-col items-center bg-white transition-all hover:bg-emerald-50 hover:border-emerald-300 group">
               <input type="file" accept=".xlsx, .xls, .csv" onChange={processInvoiceFile} className="absolute inset-0 opacity-0 cursor-pointer z-10" />
               <UploadCloud size={60} className="text-emerald-400 mb-4 group-hover:scale-110 transition-transform" />
-              <h2 className="text-xl font-bold text-slate-700">點擊或拖放 XLSX 發票檔案</h2>
-              <p className="text-slate-400 mt-2 text-sm">系統會自動將單號與專案名稱分離</p>
+              <h2 className="text-xl font-bold text-slate-700">點擊或拖放 XLSX/CSV 發票檔案</h2>
+              <p className="text-slate-400 mt-2 text-sm">系統會自動將單號與專案名稱分離 (支援系統匯出 CSV 解析)</p>
             </div>
 
             {invoiceData.length > 0 && (
@@ -898,10 +929,10 @@ const App = () => {
                       <tr>
                         <th className="px-4 py-5 text-slate-400 font-bold uppercase whitespace-nowrap">單號</th>
                         <th className="px-4 py-5 text-slate-500 font-bold uppercase min-w-[200px]">PDF 案件名稱</th>
-                        <th className="px-4 py-5 text-slate-500 font-bold uppercase min-w-[200px]">XLSX 案件名稱</th>
+                        <th className="px-4 py-5 text-slate-500 font-bold uppercase min-w-[200px]">發票 案件名稱</th>
                         <th className="px-4 py-5 text-center text-slate-400 font-bold uppercase whitespace-nowrap">單號比對</th>
                         <th className="px-4 py-5 text-right text-slate-500 font-bold uppercase whitespace-nowrap">PDF 金額</th>
-                        <th className="px-4 py-5 text-right text-slate-500 font-bold uppercase whitespace-nowrap">XLSX 金額</th>
+                        <th className="px-4 py-5 text-right text-slate-500 font-bold uppercase whitespace-nowrap">發票 金額</th>
                         <th className="px-4 py-5 text-center text-slate-400 font-bold uppercase whitespace-nowrap">金額比對</th>
                         <th className="px-4 py-5 text-center text-indigo-600 font-black uppercase whitespace-nowrap">總結</th>
                       </tr>
