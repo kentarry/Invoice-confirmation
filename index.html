@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { FileText, Loader2, CheckCircle2, AlertCircle, Download, UploadCloud, BarChart3, Filter, FileSpreadsheet, List, FileCheck, Scale, ClipboardCheck, Trash2 } from 'lucide-react';
+import { FileText, Loader2, CheckCircle2, AlertCircle, Download, UploadCloud, BarChart3, Filter, FileSpreadsheet, List, FileCheck, Scale, ClipboardCheck, Trash2, Key } from 'lucide-react';
 
-const API_KEY = ""; // 請在此填入您的 Gemini API Key
 const MODEL_NAME = "gemini-2.0-flash"; 
 
 const App = () => {
+  // --- 新增狀態：API Key 管理 ---
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem('gemini_api_key') || '');
+
   // --- 原有狀態 ---
   const [results, setResults] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -13,7 +15,7 @@ const App = () => {
   const [filterCategory, setFilterCategory] = useState('全部');
 
   // --- 狀態：頁籤控制與發票資料 ---
-  const [activeTab, setActiveTab] = useState('parser'); // 'parser'=解析, 'invoice'=發票, 'compare'=比對, 'acceptance'=驗收單
+  const [activeTab, setActiveTab] = useState('parser'); 
   const [invoiceData, setInvoiceData] = useState([]);
   const [invoiceTotal, setInvoiceTotal] = useState(0);
 
@@ -29,7 +31,7 @@ const App = () => {
   useEffect(() => {
     if (activeTab === 'acceptance') {
       if (orderIdsRef.current) {
-        orderIdsRef.current.style.height = 'auto'; // 先重置，才能正確取得縮小後的高度
+        orderIdsRef.current.style.height = 'auto'; 
         orderIdsRef.current.style.height = orderIdsRef.current.scrollHeight + 'px';
       }
       if (detailsRef.current) {
@@ -39,14 +41,14 @@ const App = () => {
     }
   }, [editableOrderIds, editableDetails, activeTab]);
 
-  // 初始化 pdf.js 與 xlsx
+  // 【修正重點 1】初始化 pdf.js 與 xlsx，改用 jsdelivr 確保 cmaps 語言包存在
   useEffect(() => {
     const pdfScript = document.createElement('script');
-    pdfScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    pdfScript.src = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js';
     pdfScript.async = true;
     document.head.appendChild(pdfScript);
     pdfScript.onload = () => {
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
     };
 
     const xlsxScript = document.createElement('script');
@@ -59,12 +61,12 @@ const App = () => {
   const pdfToImages = async (file) => {
     const arrayBuffer = await file.arrayBuffer();
     
-    // 【已修正】加入 cMapUrl 與 cMapPacked，確保中文不會變成 CID 亂數
+    // 【修正重點 2】使用 jsdelivr 的完整路徑載入字型對應表，解決中文亂碼
     const pdf = await window.pdfjsLib.getDocument({ 
       data: arrayBuffer,
-      cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/',
+      cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/cmaps/',
       cMapPacked: true,
-      standardFontDataUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/standard_fonts/'
+      standardFontDataUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/standard_fonts/'
     }).promise;
 
     const images = [];
@@ -132,7 +134,8 @@ const App = () => {
       }
     };
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${API_KEY}`;
+    // 使用使用者輸入的 API Key
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${apiKey}`;
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -142,7 +145,6 @@ const App = () => {
     if (!response.ok) throw new Error(`API Error: ${response.status}`);
     const result = await response.json();
     
-    // 【已修正】過濾可能出現的 Markdown 標記，避免 JSON 解析失敗
     let rawText = result.candidates[0].content.parts[0].text;
     rawText = rawText.replace(/```json/gi, '').replace(/```/gi, '').trim();
     
@@ -152,6 +154,13 @@ const App = () => {
   // --- 3. 執行任務與清洗 ---
   const processFiles = async (uploadedFiles) => {
     if (uploadedFiles.length === 0) return;
+    
+    // 【修正重點 3】檢查是否已填寫 API Key
+    if (!apiKey.trim()) {
+      alert("請先於上方設定 Gemini API Key！");
+      return;
+    }
+
     setIsProcessing(true);
 
     const cleanVal = (v) => {
@@ -232,7 +241,6 @@ const App = () => {
 
     const reader = new FileReader();
     reader.onload = (evt) => {
-      // 【已修正】改用 ArrayBuffer 來接資料，避免中文亂碼
       const arrayBuffer = evt.target.result;
       const wb = window.XLSX.read(arrayBuffer, { type: 'array' });
       const wsname = wb.SheetNames[0];
@@ -289,20 +297,16 @@ const App = () => {
         alert("找不到對應的欄位（需要「項目名」與「金額（未稅）」），請確認檔案格式是否正確。");
       }
     };
-    // 【已修正】配合上方，改用 readAsArrayBuffer
     reader.readAsArrayBuffer(file);
     e.target.value = null; 
   };
 
 
   // --- 4. 工具函數與資料處理 ---
-  
-  // 新增：安全複製到剪貼簿功能 (避免 iFrame Policy 阻擋)
   const copyToClipboard = (text) => {
     try {
       const textArea = document.createElement("textarea");
       textArea.value = text;
-      // 避免視窗捲動與顯示
       textArea.style.position = "fixed";
       textArea.style.top = "0";
       textArea.style.left = "-9999px";
@@ -322,6 +326,12 @@ const App = () => {
       console.error('複製失敗:', err);
       alert('無法存取剪貼簿，請手動複製。');
     }
+  };
+
+  const handleApiKeyChange = (e) => {
+    const val = e.target.value;
+    setApiKey(val);
+    localStorage.setItem('gemini_api_key', val);
   };
 
   const handleOrderIdChange = (id, newOrderId) => {
@@ -481,7 +491,7 @@ const App = () => {
     };
     const deptOrder = { '研五': 1, '研二': 2, '研三': 3, '其他': 4 };
 
-    let overallTotal = 0; // 計算總金額
+    let overallTotal = 0; 
 
     const grouped = validResults.reduce((acc, curr) => {
       const cat = curr.data.category;
@@ -510,7 +520,6 @@ const App = () => {
     const allOrderIds = sortedCategories.flatMap(g => g.orderIds).filter(Boolean);
 
     const cleanProjectName = (name, category) => {
-      // 需求3：如果是 social casino，不要替換掉原本的名稱，原汁原味呈現 VF_... 等等
       if (category === 'social casino') return name;
 
       let cleaned = name;
@@ -533,15 +542,12 @@ const App = () => {
       const uniqueProjects = [...new Set(cleanedNames.filter(n => n))]; 
       
       let prefix = g.category;
-      // 根據需求範例，social casino 和 滿貫大亨 都不需要再強制加上分類前綴
       if (g.category === '滿貫大亨' || g.category === 'social casino') prefix = '';
       
       const displayName = prefix ? `${prefix}_${uniqueProjects.join('、')}` : uniqueProjects.join('、');
       
-      // 加總到全部總金額
       overallTotal += g.totalAmount;
 
-      // ✅ 調整處：在此字串中，於部門後方加上【專案分類】
       return `【${g.dept}】【${g.category}】${displayName}  共${formatWithCommas(g.totalAmount)}`;
     });
 
@@ -552,7 +558,6 @@ const App = () => {
     };
   }, [results]);
 
-  // 當解析資料有變動時，自動將資料同步到可以編輯的框框裡
   useEffect(() => {
     setEditableOrderIds(acceptanceData.orderIdsText);
     setEditableDetails(acceptanceData.detailsText);
@@ -562,6 +567,28 @@ const App = () => {
   return (
     <div className="min-h-screen bg-slate-50 p-6 md:p-10 font-sans">
       <div className="max-w-[1400px] mx-auto">
+
+        {/* --- 新增：API Key 設定區塊 --- */}
+        <div className="bg-white px-6 py-4 rounded-[2rem] shadow-sm border border-slate-200 mb-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div className="flex items-center gap-3 text-slate-700">
+            <div className="p-2 bg-indigo-100 rounded-full text-indigo-600">
+              <Key size={20} />
+            </div>
+            <div>
+              <h2 className="font-bold">系統設定</h2>
+              <p className="text-sm text-slate-500">請輸入您的 Gemini API Key 以啟用解析功能</p>
+            </div>
+          </div>
+          <div className="w-full md:w-auto flex-1 max-w-md">
+            <input 
+              type="password" 
+              value={apiKey} 
+              onChange={handleApiKeyChange}
+              placeholder="AIzaSy..." 
+              className="w-full bg-slate-50 border border-slate-200 text-slate-700 rounded-xl px-4 py-2 focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition-all font-mono text-sm"
+            />
+          </div>
+        </div>
         
         {/* 頭部標題與匯出區 */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
