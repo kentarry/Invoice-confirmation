@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { FileText, Loader2, CheckCircle2, AlertCircle, Download, UploadCloud, BarChart3, Filter, FileSpreadsheet, List, FileCheck, Scale, ClipboardCheck, Trash2 } from 'lucide-react';
 
-const API_KEY = "AIzaSyBRWW7I0xrtc6bRzt1bhONGP7yDgduoBC4"; // 請在此填入您的 Gemini API Key
+const API_KEY = ""; // 請在此填入您的 Gemini API Key
 const MODEL_NAME = "gemini-2.0-flash"; 
 
 const App = () => {
@@ -58,7 +58,15 @@ const App = () => {
   // --- 1. 影像預處理 ---
   const pdfToImages = async (file) => {
     const arrayBuffer = await file.arrayBuffer();
-    const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    
+    // 【已修正】加入 cMapUrl 與 cMapPacked，確保中文不會變成 CID 亂數
+    const pdf = await window.pdfjsLib.getDocument({ 
+      data: arrayBuffer,
+      cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/',
+      cMapPacked: true,
+      standardFontDataUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/standard_fonts/'
+    }).promise;
+
     const images = [];
 
     for (let i = 1; i <= pdf.numPages; i++) {
@@ -133,7 +141,12 @@ const App = () => {
     
     if (!response.ok) throw new Error(`API Error: ${response.status}`);
     const result = await response.json();
-    return JSON.parse(result.candidates[0].content.parts[0].text);
+    
+    // 【已修正】過濾可能出現的 Markdown 標記，避免 JSON 解析失敗
+    let rawText = result.candidates[0].content.parts[0].text;
+    rawText = rawText.replace(/```json/gi, '').replace(/```/gi, '').trim();
+    
+    return JSON.parse(rawText);
   };
 
   // --- 3. 執行任務與清洗 ---
@@ -219,8 +232,9 @@ const App = () => {
 
     const reader = new FileReader();
     reader.onload = (evt) => {
-      const bstr = evt.target.result;
-      const wb = window.XLSX.read(bstr, { type: 'binary' });
+      // 【已修正】改用 ArrayBuffer 來接資料，避免中文亂碼
+      const arrayBuffer = evt.target.result;
+      const wb = window.XLSX.read(arrayBuffer, { type: 'array' });
       const wsname = wb.SheetNames[0];
       const ws = wb.Sheets[wsname];
       const rows = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
@@ -275,7 +289,8 @@ const App = () => {
         alert("找不到對應的欄位（需要「項目名」與「金額（未稅）」），請確認檔案格式是否正確。");
       }
     };
-    reader.readAsBinaryString(file);
+    // 【已修正】配合上方，改用 readAsArrayBuffer
+    reader.readAsArrayBuffer(file);
     e.target.value = null; 
   };
 
